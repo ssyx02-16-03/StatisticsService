@@ -1,0 +1,16 @@
+{
+  "fields": ["CareContactRegistrationTime"],
+  "size":1000,
+  "query":{
+    "match" :{
+      "_index":"on_going_patient_index"
+    }
+  },
+  "filter" : {
+    "range" : {
+      "TimeToTriage" : {
+        "lt" : 0
+      }
+    }
+  }
+}

@@ -1,6 +1,8 @@
 package service
 
 import com.typesafe.config.ConfigFactory
+import org.json4s.JValue
+import org.json4s.JsonAST.JValue
 import org.json4s._
 import org.json4s.native.JsonMethods._
 import wabisabi.Client
@@ -19,12 +21,24 @@ class ElasticInterface {
   val client = new Client(s"http://$ip:$port") // creates a wabisabi client for communication with elasticsearch
 
   def query(index: String, query: String): Future[String] = {
-    client.search(index, query).map(_.getResponseBody)
+    val search = JSONReader.read(query)
+    client.search(index, search).map(_.getResponseBody)
   }
 
   def getResult(result: Future[String]): JValue ={
     while(!result.isCompleted){} //wait until done
     parse(result.value.get.get)
     //TODO failed guards
+  }
+
+  def jsonExtractor[A](keys: List[String], json: Any): A = {
+    if(keys.isEmpty){
+      return json.asInstanceOf[A]
+    }
+
+    json match {
+      case jVal:JValue =>          jsonExtractor(keys.tail, jVal \ keys.head)
+      case mop:Map[String, Any] => jsonExtractor(keys.tail, mop.get(keys.head).get)
+    }
   }
 }

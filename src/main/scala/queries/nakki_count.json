@@ -1,0 +1,12 @@
+{
+  "size":0,
+  "query":{
+    "match" :{  "Team" : "NAKKI"  }
+  }
+}
+
+
+
+
+
+

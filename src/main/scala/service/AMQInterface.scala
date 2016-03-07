@@ -43,13 +43,11 @@ class AMQInterface extends Actor {
     }
   }
 
-
-
-  def sendToEvah(json: String) = {
+  private def sendToEvah(json: String) = {
     theBus.foreach{bus => bus ! SendMessage(Topic(writeTo), AMQMessage(json))}
   }
 
-  def getNow = {
+  private def getNow = {
     DateTime.now(DateTimeZone.forID("Europe/Stockholm"))
   }
 }
