@@ -38,7 +38,7 @@ object Main extends App {
     println("Uppdaterad: "+getNow)
     println
     patientsPerTeam()
-    println("\n\nVäntetider")
+    println("\n\nVäntetider genomsnitt")
     val triage = averageTimeToEvent("triage_wait_times.json")
     val doctor = averageTimeToEvent("doctor_wait_times.json")
 
@@ -88,8 +88,11 @@ object Main extends App {
     times.foreach{ t =>
       time += timeDifference(t.toDateTime, now)
     }
-    time = time / times.size
-    new Result(time.toDuration.getStandardMinutes, times.size)
+    val returnTime = times.size match {
+      case 0 => -1
+      case _ =>  time / times.size
+    }
+    new Result(returnTime.toDuration.getStandardMinutes, times.size)
   }
 
   class Result(timeIn:Long, countIn:Int) {
