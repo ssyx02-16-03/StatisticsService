@@ -5,14 +5,18 @@ import akka.event.Logging
 import akka.stream.ActorMaterializer
 import com.github.nscala_time.time.Imports._
 import com.typesafe.config.ConfigFactory
-import org.json4s.JsonAST.{JValue, JArray}
+import org.json4s.native.JsonMethods._
+import org.json4s.native.Serialization._
+import org.json4s._
+import org.json4s.JsonDSL._
 
 object Main extends App {
+  implicit val formats = org.json4s.DefaultFormats ++ org.json4s.ext.JodaTimeSerializers.all // json4s needs this for something
+
   // load configs from resources/application.conf
   val config = ConfigFactory.load()
   val sleepTime = config.getLong("sleepTime") * 1000000 //convert milliseconds to nanoseconds
   val elastic = new ElasticInterface
-
 
   implicit val system = ActorSystem()
   implicit val executor = system.dispatcher
@@ -34,44 +38,63 @@ object Main extends App {
     println("Uppdaterad: "+getNow)
     println
     patientsPerTeam()
-    println("\nKötider")
-    println("Triage: " + timeToEvent("triage_wait_times.json")+" minuter")
-    println("Läkare: " + timeToEvent("doctor_wait_times.json")+" minuter")
+    println("\n\nVäntetider")
+    val triage = averageTimeToEvent("triage_wait_times.json")
+    val doctor = averageTimeToEvent("doctor_wait_times.json")
+
+    println("Triage: " + triage.time +" minuter, "+ triage.count+" patienter i kö")
+    println("Läkare: " + doctor.time +" minuter, "+ doctor.count+" patienter i kö")
 
     //transformActor !  new OutgoingMessage((result \ "hits" \ "total").values.toString)
   }
 
   private def patientsPerTeam(): Unit = {
-    val nakba = elastic.query(elastic.ONGOING_PATIENT_INDEX, "nakba_count.json")
-    val nakki = elastic.query(elastic.ONGOING_PATIENT_INDEX, "nakki_count.json")
-    val nakkk = elastic.query(elastic.ONGOING_PATIENT_INDEX, "nakkk_count.json")
-    val nakme = elastic.query(elastic.ONGOING_PATIENT_INDEX, "nakme_count.json")
-    val nakor = elastic.query(elastic.ONGOING_PATIENT_INDEX, "nakor_count.json")
-    val total = elastic.query(elastic.ONGOING_PATIENT_INDEX, "total_count.json")
-
     println("Antal patienter per team: ")
-    println("NAKBA: " +(elastic.getResult(nakba) \ "hits" \"total").values)
-    println("NAKKI: " +(elastic.getResult(nakki) \ "hits" \"total").values)
-    println("NAKKK: " +(elastic.getResult(nakkk) \ "hits" \"total").values)
-    println("NAKME: " +(elastic.getResult(nakme) \ "hits" \"total").values)
-    println("NAKOR: " +(elastic.getResult(nakor) \ "hits" \"total").values)
-    println("TOTAL: " +(elastic.getResult(total) \ "hits" \"total").values)
+    print("       total   blå     grön    gul     orange  röd")
+    List("NAKBA", "NAKKI", "NAKKK", "NAKME", "NAKOR", "NAKM ").foreach(team => {
+      print("\n"+team+"  ")
+      List("", "blå", "grön", "gul", "orange", "röd").foreach(prio => {
+        val search: JObject = {
+          ("size" -> 100) ~
+            ("query" ->
+              ("multi_match" -> {
+                ("query" -> (team +" "+prio)) ~
+                  ("type" -> "cross_fields") ~
+                  ("fields" -> List("Team", "Priority")) ~
+                  ("operator" -> "and")
+              }))
+        }
+        val searchString = write(search)
+        val query = elastic.query(elastic.ONGOING_PATIENT_INDEX, searchString)
+        val ans = elastic.getResult(query)
+        print((ans \ "hits" \ "total").values+"       ")
+      })
+    })
   }
 
-  private def timeToEvent(query:String): Long = {
-    val fetch = elastic.query(elastic.ONGOING_PATIENT_INDEX, query)
+  private def averageTimeToEvent(query:String): Result = {
+    val fetch = elastic.queryJsonFile(elastic.ONGOING_PATIENT_INDEX, query)
     val events = (elastic.getResult(fetch) \ "hits" \ "hits").asInstanceOf[JArray]
     var times = List[String]()
+
     events.values.foreach {t =>
-      times = times ::: elastic.jsonExtractor[List[String]](List("fields", "CareContactRegistrationTime"), t)
+      val time = elastic.jsonExtractor[List[String]](List("fields", "CareContactRegistrationTime"), t).head
+      val localTime = List(time.toDateTime.toDateTime(DateTimeZone.forID("Europe/Stockholm")).toString())
+      times = localTime ::: times
     }
+
     val now = getNow
     var time:Long = 0
     times.foreach{ t =>
-      time += timeDifference(t.toDateTime.toDateTime(DateTimeZone.forID("Europe/Stockholm")), now)
+      time += timeDifference(t.toDateTime, now)
     }
     time = time / times.size
-    time.toDuration.getStandardMinutes
+    new Result(time.toDuration.getStandardMinutes, times.size)
+  }
+
+  class Result(timeIn:Long, countIn:Int) {
+    val time = timeIn
+    val count = countIn
   }
 
   private def getNow = {

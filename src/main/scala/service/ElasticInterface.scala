@@ -20,8 +20,12 @@ class ElasticInterface {
   val port = config.getString("elasticsearch.port")
   val client = new Client(s"http://$ip:$port") // creates a wabisabi client for communication with elasticsearch
 
-  def query(index: String, query: String): Future[String] = {
+  def queryJsonFile(index: String, query: String): Future[String] = {
     val search = JSONReader.read(query)
+    client.search(index, search).map(_.getResponseBody)
+  }
+
+  def query(index: String, search: String): Future[String] = {
     client.search(index, search).map(_.getResponseBody)
   }
 
