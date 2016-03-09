@@ -3,12 +3,19 @@ package service
 import akka.actor.{Props, ActorSystem}
 import akka.event.Logging
 import akka.stream.ActorMaterializer
+import com.fasterxml.jackson.databind.JsonSerializer.None
 import com.github.nscala_time.time.Imports._
 import com.typesafe.config.ConfigFactory
 import org.json4s.native.JsonMethods._
 import org.json4s.native.Serialization._
+import org.json4s.ext._
 import org.json4s._
 import org.json4s.JsonDSL._
+import com.github.nscala_time.time.Imports._
+import org.json4s.native.Serialization.{read, write}
+import scala.concurrent.Future
+
+import scala.collection.convert.Wrappers.JMapWrapper
 
 object Main extends App {
   implicit val formats = org.json4s.DefaultFormats ++ org.json4s.ext.JodaTimeSerializers.all // json4s needs this for something
@@ -16,7 +23,13 @@ object Main extends App {
   // load configs from resources/application.conf
   val config = ConfigFactory.load()
   val sleepTime = config.getLong("sleepTime") * 1000000 //convert milliseconds to nanoseconds
+  val timeBetweenDataSamples = config.getLong("timeBetweenDataSamples") * 1000000
+  var lastSample:Long = 0
+
   val elastic = new ElasticInterface
+
+  var triageWaitTimes:List[Result] = List()
+  var doctorWaitTimes:List[Result] = List()
 
   implicit val system = ActorSystem()
   implicit val executor = system.dispatcher
@@ -34,7 +47,8 @@ object Main extends App {
   }
 
   def iteration(): Unit = {
-    for(i <- 1 to 100)println("\n")
+    for(i <- 1 to 5)println("\n")
+    /*
     println("Uppdaterad: "+getNow)
     println
     patientsPerTeam()
@@ -42,10 +56,23 @@ object Main extends App {
     val triage = averageTimeToEvent("triage_wait_times.json")
     val doctor = averageTimeToEvent("doctor_wait_times.json")
 
+    // add data point to history if enough time has passed
+    if(System.nanoTime() > lastSample + timeBetweenDataSamples ){
+      //TODO decide on better formatting
+      triageWaitTimes = List(triage) ::: triageWaitTimes
+      doctorWaitTimes = List(doctor) ::: doctorWaitTimes
+      lastSample = System.nanoTime()
+    }
     println("Triage: " + triage.time +" minuter, "+ triage.count+" patienter i kö")
     println("Läkare: " + doctor.time +" minuter, "+ doctor.count+" patienter i kö")
+*/
+    println("\n\n\n\n\n\n\n\n")
+    val patients:JValue = getPatientsPresentOverTime(interval = 60, datapoints = 48)
+    val patientList = patients.asInstanceOf[JArray]
 
-    //transformActor !  new OutgoingMessage((result \ "hits" \ "total").values.toString)
+    for(m <- 0 to 47){
+      println(patientList(m) \ "hits" \ "total")
+    }
   }
 
   private def patientsPerTeam(): Unit = {
@@ -56,13 +83,14 @@ object Main extends App {
       List("", "blå", "grön", "gul", "orange", "röd").foreach(prio => {
         val search: JObject = {
           ("size" -> 100) ~
-            ("query" ->
-              ("multi_match" -> {
-                ("query" -> (team +" "+prio)) ~
-                  ("type" -> "cross_fields") ~
-                  ("fields" -> List("Team", "Priority")) ~
-                  ("operator" -> "and")
-              }))
+          ("query" ->
+            ("multi_match" ->
+              ("query" -> ( team + " " + prio )) ~
+              ("type" -> "cross_fields") ~
+              ("fields" -> List( "Team", "Priority" )) ~
+              ("operator" -> "and")
+            )
+          )
         }
         val searchString = write(search)
         val query = elastic.query(elastic.ONGOING_PATIENT_INDEX, searchString)
@@ -98,6 +126,10 @@ object Main extends App {
   class Result(timeIn:Long, countIn:Int) {
     val time = timeIn
     val count = countIn
+    val timestamp = getNow
+    override def toString: String = {
+      "time: "+time+" count: "+count+" timestamp: "+timestamp
+    }
   }
 
   private def getNow = {
@@ -114,4 +146,45 @@ object Main extends App {
       case e:Exception => -1 // usually illegal formatting
     }
   }
+
+  private def getPatientsPresentOverTime(interval:Int, datapoints:Int): List[JValue] ={
+    val now = getNow
+    var patients:List[JValue] = List()
+
+    for(t <- 0 to datapoints){
+      val time = now.minusMinutes(t*interval)
+      val search = getPatientsPresent(time,time, List("CareContactId"))
+      patients = List(elastic.getResult(search)) ::: patients
+    }
+    patients
+  }
+
+  private def getPatientsPresent(from:DateTime, to: DateTime, fields: List[String]): Future[String] = {
+    print(from)
+    print("   ")
+    println(to)
+    val query = write(
+      ("fields" -> fields) ~
+      ("size" -> 10000) ~
+      ("query" ->
+        ("match_all"  -> List())
+      ) ~
+      ("filter" ->
+        ("range" ->
+          ("CareContactRegistrationTime" ->
+            ("lte" -> to.toString())
+          ) ~
+          ("RemovedTime" ->
+            ("gte" -> from.minusHours(1).toString())
+          )
+        )
+      )
+    )
+    elastic.query("*", query)
+  }
 }
+
+
+
+
+
