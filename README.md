@@ -1,3 +1,3 @@
 # StatisticsService
-## work in progress
+# CANCELLED
 
